@@ -158,6 +158,107 @@ def check_security_headers(domain: str) -> list[CheckResult]:
  
     return results
  
+# ---------------------------------------------------------------------------
+# 3. DNS / email security checks (SPF, DMARC)
+# ---------------------------------------------------------------------------
+ 
+def _query_txt(name: str) -> list[str]:
+    """Return all TXT record strings for a DNS name, or [] if none/error."""
+    if not DNS_AVAILABLE:
+        raise RuntimeError(
+            "dnspython is not installed. Run: pip install dnspython"
+        )
+    try:
+        resolver = dns.resolver.Resolver()
+        resolver.nameservers = ["1.1.1.1"]
+        answers = resolver.resolve(name, "TXT")
+    except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
+        return []
+    except dns.exception.DNSException as exc:
+        raise RuntimeError(f"DNS lookup failed for {name}: {exc}") from exc
+ 
+    txt_records = []
+    for rdata in answers:
+        # TXT records can be split into multiple quoted strings; join them.
+        txt_records.append(
+            b"".join(rdata.strings).decode("utf-8", errors="replace")
+        )
+    return txt_records
+
+ 
+def check_spf(domain: str) -> CheckResult:
+    """Concept: SPF lists which mail servers are allowed to send email
+    'from' this domain. Without it, it's easier for attackers to spoof
+    your domain in phishing emails sent to your customers or partners.
+    """
+    try:
+        records = _query_txt(domain)
+    except RuntimeError as exc:
+        return CheckResult("spf", "SPF", CheckStatus.ERROR, str(exc))
+ 
+    spf_records = [r for r in records if r.lower().startswith("v=spf1")]
+ 
+    if not spf_records:
+        return CheckResult(
+            "spf", "SPF", CheckStatus.FAIL,
+            "No SPF record found (no TXT record starting with v=spf1).",
+        )
+    if len(spf_records) > 1:
+        return CheckResult(
+            "spf", "SPF", CheckStatus.WARN,
+            f"Multiple SPF records found ({len(spf_records)}). "
+            "This is invalid per RFC 7208 and can cause unpredictable "
+            "email delivery/authentication behavior.",
+            raw={"records": spf_records},
+        )
+ 
+    return CheckResult(
+        "spf", "SPF", CheckStatus.PASS,
+        f"SPF record found: {spf_records[0]}",
+    )
+ 
+ 
+def check_dmarc(domain: str) -> CheckResult:
+    """Concept: DMARC tells receiving mail servers what to do with email
+    that fails SPF/DKIM checks (nothing, quarantine, or reject), and gives
+    the domain owner reports on abuse. 'p=none' means monitoring only -
+    spoofed mail is still delivered.
+    """
+    dmarc_name = f"_dmarc.{domain}"
+    try:
+        records = _query_txt(dmarc_name)
+    except RuntimeError as exc:
+        return CheckResult("dmarc", "DMARC", CheckStatus.ERROR, str(exc))
+ 
+    dmarc_records = [r for r in records if r.lower().startswith("v=dmarc1")]
+ 
+    if not dmarc_records:
+        return CheckResult(
+            "dmarc", "DMARC", CheckStatus.FAIL,
+            f"No DMARC record found at {dmarc_name}.",
+        )
+ 
+    record = dmarc_records[0]
+    # Extract the policy tag (p=none/quarantine/reject) in a simple way.
+    policy = "unknown"
+    for part in record.split(";"):
+        part = part.strip()
+        if part.lower().startswith("p="):
+            policy = part.split("=", 1)[1].strip().lower()
+            break
+ 
+    if policy == "reject":
+        status = CheckStatus.PASS
+    elif policy == "quarantine":
+        status = CheckStatus.WARN
+    else:  # none, unknown, or missing
+        status = CheckStatus.WARN
+ 
+    return CheckResult(
+        "dmarc", "DMARC", status,
+        f"DMARC record found. Policy: p={policy}. Record: {record}",
+    )
+ 
  
 
 
@@ -165,6 +266,8 @@ def run_scan(domain: str) -> list[CheckResult]:
     results: list[CheckResult] = []
     results.append(check_https_redirect(domain))
     results.extend(check_security_headers(domain))
+    results.append(check_spf(domain))
+    results.append(check_dmarc(domain))
     return results
  
  
