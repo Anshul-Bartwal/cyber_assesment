@@ -116,12 +116,55 @@ def check_https_redirect(domain: str) -> CheckResult:
 # ---------------------------------------------------------------------------
 # 2. TO DO : Security headers check
 # ---------------------------------------------------------------------------
-
+def check_security_headers(domain: str) -> list[CheckResult]:
+    """Fetch https://domain and inspect a handful of security headers.
+ 
+    Concept: these headers are instructions the server gives the browser
+    about how to behave defensively (e.g. "only ever load me over HTTPS",
+    "don't let other sites put me in an iframe"). Missing headers are not
+    automatically vulnerabilities - see spec section 5.2 - but their
+    absence is a useful signal worth surfacing.
+    """
+    https_url = f"https://{domain}"
+    results: list[CheckResult] = []
+ 
+    try:
+        resp = requests.get(https_url, timeout=TIMEOUT, allow_redirects=True)
+        headers = {k.lower(): v for k, v in resp.headers.items()}
+    except requests.exceptions.RequestException as exc:
+        error = CheckResult(
+            "security_headers", "Security Headers", CheckStatus.ERROR,
+            f"Could not fetch {https_url}: {exc}",
+        )
+        return [error]
+ 
+    header_checks = [ # check_id,title,header_key
+        ("hsts", "Strict-Transport-Security", "strict-transport-security"),
+        ("csp", "Content-Security-Policy", "content-security-policy"),
+        ("x_frame_options", "X-Frame-Options", "x-frame-options"),
+    ]
+ 
+    for check_id, title, header_key in header_checks:
+        if header_key in headers:
+            results.append(CheckResult(
+                check_id, title, CheckStatus.PASS,
+                f"{title} present: {headers[header_key]}",
+            ))
+        else:
+            results.append(CheckResult(
+                check_id, title, CheckStatus.FAIL,
+                f"{title} header was not found on {https_url}",
+            ))
+ 
+    return results
+ 
+ 
 
 
 def run_scan(domain: str) -> list[CheckResult]:
     results: list[CheckResult] = []
     results.append(check_https_redirect(domain))
+    results.extend(check_security_headers(domain))
     return results
  
  
