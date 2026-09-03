@@ -24,13 +24,15 @@ import argparse
 import json
 import sys
 
-from backend.scanners import web,ports,dns_scanner
+from backend.scanners import web,ports,dns_scanner,tls
 from backend.models.finding import Severity, FindingStatus
 
 SCANNERS = {
     "web": web.run,
     "ports": ports.run,
-    "dns":dns_scanner.run
+    "dns":dns_scanner.run,
+    "tls":tls.run,
+
 
 }
 
