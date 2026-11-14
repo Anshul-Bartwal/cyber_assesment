@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import requests
 
-from backend.models.finding import (
+from models.finding import (
     Finding, Severity, Effort, Category, FindingStatus, make_pass, make_error,
 )
 TIMEOUT = 8

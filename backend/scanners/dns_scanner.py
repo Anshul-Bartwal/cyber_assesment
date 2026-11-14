@@ -9,7 +9,7 @@ own `dns` package (dnspython), which this module imports.
 
 from __future__ import annotations
 
-from backend.models.finding import (
+from models.finding import (
     Finding, Severity, Effort, Category, FindingStatus, make_pass, make_error,
 )
 

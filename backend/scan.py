@@ -1,6 +1,8 @@
+#!/usr/bin/env python3
 """
+CyberCheck - Phase 2 orchestrator.
 
-Runs every modular scanner (web, tls, dns, ports, technology, (to be made)) against a
+Runs every modular scanner (web, tls, dns, ports, technology) against a
 domain and produces a single list of standardized Finding objects. This
 replaces the monolithic Phase 1 scanner.py - the checks are the same in
 spirit, but now:
@@ -24,16 +26,17 @@ import argparse
 import json
 import sys
 
-from backend.scanners import web,ports,dns_scanner,tls
-from backend.models.finding import Severity, FindingStatus
+from scanners import web, dns_scanner, tls, ports, technology
+from models.finding import Severity, FindingStatus
+from scoring.risk import prioritize, impact_effort_label
+from scoring.score import calculate_score
 
 SCANNERS = {
     "web": web.run,
+    "dns": dns_scanner.run,
+    "tls": tls.run,
     "ports": ports.run,
-    "dns":dns_scanner.run,
-    "tls":tls.run,
-
-
+    "technology": technology.run,
 }
 
 SEVERITY_ORDER = {
@@ -67,6 +70,7 @@ def run_all(domain: str, only: list[str] | None = None) -> list:
             print(f"Scanner '{name}' raised an unexpected error: {exc}", file=sys.stderr)
     return findings
 
+
 def print_human(domain: str, findings: list) -> None:
     print(f"\nCyberCheck - Phase 2 Scan Results for {domain}\n")
     findings_sorted = sorted(
@@ -88,10 +92,42 @@ def print_human(domain: str, findings: list) -> None:
                 print(f"      -> {f.recommendation}")
 
     issues = [f for f in findings if f.status == FindingStatus.ISSUE]
-    print(f"\n{len(issues)} issue(s) found out of {len(findings)} checks run.\n")
+    print(f"\n{len(issues)} issue(s) found out of {len(findings)} checks run.")
+    print_score(findings)
+
+
+def print_score(findings: list) -> None:
+    result = calculate_score(findings)
+    print("\n" + "=" * 50)
+    if result.overall is None:
+        print("SECURITY SCORE: not enough data to calculate")
+    else:
+        print(f"SECURITY SCORE: {result.overall} / 100")
+        print(f"(based on {result.coverage}% of the full assessment)")
+    for g in result.groups.values():
+        shown = f"{g.score}" if g.assessed else "not assessed"
+        print(f"  {g.name:<20} {shown}")
+    if result.error_count:
+        print(f"  Note: {result.error_count} check(s) could not run, "
+              "so the score may be incomplete.")
+
+    top = prioritize(findings, limit=3)
+    if top:
+        print("\nTOP PRIORITIES")
+        for i, f in enumerate(top, 1):
+            print(f"  {i}. {f.title}  [{f.severity.value}]")
+            print(f"     {impact_effort_label(f)}")
+            print(f"     -> {f.recommendation}")
+    print()
+
 
 def print_json(domain: str, findings: list) -> None:
-    payload = {"domain": domain, "findings": [f.to_dict() for f in findings]}
+    payload = {
+        "domain": domain,
+        "score": calculate_score(findings).to_dict(),
+        "top_priorities": [f.to_dict() for f in prioritize(findings, limit=3)],
+        "findings": [f.to_dict() for f in findings],
+    }
     print(json.dumps(payload, indent=2))
 
 

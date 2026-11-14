@@ -17,7 +17,7 @@ from __future__ import annotations
 from ast import List
 import socket
 
-from backend.models.finding import (
+from models.finding import (
     Finding, Severity, Effort, Category, FindingStatus, make_pass,make_error
 )
 
