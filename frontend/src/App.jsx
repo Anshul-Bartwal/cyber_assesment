@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import { scanDomain } from "./api";
+import { getQuestions, scanDomain, submitAnswers } from "./api";
 import ScoreRing from "./components/ScoreRing";
 import CategoryBars from "./components/CategoryBars";
 import PriorityList from "./components/PriorityList";
 import FindingsList from "./components/FindingsList";
+import Questionnaire, { visibleAnswers } from "./components/Questionnaire";
 
 const STEPS = [
   "Checking HTTPS and security headers…",
@@ -30,6 +31,16 @@ export default function App() {
   const [error, setError] = useState("");
   const [result, setResult] = useState(null);
 
+  const [questions, setQuestions] = useState([]);
+  const [answers, setAnswers] = useState({});
+  const [submitting, setSubmitting] = useState(false);
+  const [answersError, setAnswersError] = useState("");
+
+  // Load the questionnaire once. If it fails, the scan still works.
+  useEffect(() => {
+    getQuestions().then(setQuestions).catch(() => {});
+  }, []);
+
   // The API answers in one go, so rotate friendly status messages while
   // we wait. (Real streaming progress is a later polish item.)
   useEffect(() => {
@@ -45,7 +56,9 @@ export default function App() {
   async function handleSubmit(e) {
     e.preventDefault();
     setError("");
+    setAnswersError("");
     setResult(null);
+    setAnswers({});
     setLoading(true);
     try {
       setResult(await scanDomain(domain.trim()));
@@ -56,7 +69,25 @@ export default function App() {
     }
   }
 
+  async function handleAnswersSubmit() {
+    setAnswersError("");
+    setSubmitting(true);
+    try {
+      const updated = await submitAnswers(
+        result.scan_id,
+        visibleAnswers(questions, answers)
+      );
+      setResult(updated);
+    } catch (err) {
+      setAnswersError(err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   const score = result?.score;
+  const changed =
+    result?.previous_overall != null && score?.overall != null;
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-10">
@@ -124,11 +155,20 @@ export default function App() {
               <div className="flex-1">
                 <div className="text-sm text-slate-500">Security score for</div>
                 <div className="mb-3 text-xl font-semibold text-slate-900">{result.domain}</div>
+
+                {changed && (
+                  <p className="mb-2 rounded-md bg-slate-100 p-3 text-sm text-slate-700">
+                    After adding your business answers, your score went from{" "}
+                    <strong>{result.previous_overall}</strong> to{" "}
+                    <strong>{score.overall}</strong>.
+                  </p>
+                )}
+
                 {score.coverage_percent < 100 && (
                   <p className="rounded-md bg-amber-50 p-3 text-sm text-amber-800">
-                    This score covers {score.coverage_percent}% of the full assessment.
-                    Authentication and business practices will be included once the
-                    questionnaire is completed.
+                    {result.questionnaire_answered === 0
+                      ? `This score covers ${score.coverage_percent}% of the full assessment. Complete the questionnaire below to include authentication and business practices.`
+                      : `This score covers ${score.coverage_percent}% of the full assessment. Answer more questions below for the full picture.`}
                   </p>
                 )}
                 {score.checks_that_could_not_run > 0 && (
@@ -139,6 +179,19 @@ export default function App() {
               </div>
             </div>
           </Card>
+
+          {questions.length > 0 && (
+            <Card title="Business security questionnaire">
+              <Questionnaire
+                questions={questions}
+                answers={answers}
+                onChange={(id, value) => setAnswers((a) => ({ ...a, [id]: value }))}
+                onSubmit={handleAnswersSubmit}
+                submitting={submitting}
+                error={answersError}
+              />
+            </Card>
+          )}
 
           <Card title="Category scores">
             <CategoryBars categories={score.categories} />
